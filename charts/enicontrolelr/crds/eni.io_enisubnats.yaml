@@ -34,7 +34,7 @@ spec:
     name: v1alpha1
     schema:
       openAPIV3Schema:
-        description: SpiderSubnet is the Schema for the spidersubnets API.
+        description: EniSubnet is the Schema for the enisubnets API.
         properties:
           apiVersion:
             description: 'APIVersion defines the versioned schema of this representation
@@ -49,7 +49,7 @@ spec:
           metadata:
             type: object
           spec:
-            description: SubnetSpec defines the desired state of SpiderSubnet.
+            description: SubnetSpec defines the desired state of EniSubnet.
             properties:
               ipVersion:
                 enum:
@@ -58,33 +58,44 @@ spec:
                 format: int64
                 type: integer
               minAvaliable:
-                format: int64
                 type: integer
+              namespaceName:
+                items:
+                  type: string
+                type: array
+              nodeName:
+                items:
+                  type: string
+                type: array
               preAllocated:
-                format: int64
                 type: integer
+              project-id:
+                description: project-id alias is tenant-id
+                type: string
               subnet-id:
                 type: string
               vpc-id:
+                description: vpc-id alias is network-id
                 type: string
             required:
             - subnet-id
             - vpc-id
             type: object
           status:
-            description: SubnetStatus defines the observed state of SpiderSubnet.
+            description: SubnetStatus defines the observed state of Subnet.
             properties:
               cidr:
                 type: string
+              namespaceName:
+                items:
+                  type: string
+                type: array
+              nodeName:
+                items:
+                  type: string
+                type: array
               subnat-name:
                 type: string
-              used:
-                additionalProperties:
-                  items:
-                    type: string
-                  type: array
-                description: node:ippoolname
-                type: object
               vpc-name:
                 type: string
             type: object

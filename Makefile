@@ -1,10 +1,10 @@
 #!/usr/bin/make -f
 
-# Copyright 2022 Authors of eni-controller
+# Copyright 2022 Authors of enipam
 # SPDX-License-Identifier: Apache-2.0
 
 
-include Makefile.defs test/Makefile.defs
+include Makefile.defs 
 
 all: build-bin install-bin
 
@@ -42,17 +42,14 @@ build_image:
 		echo "Image $${NAME##*/} build success" ; \
 	done
 
-.PHONY: lint
+.PHONY: lint-golang
 lint-golang:
 	@$(ECHO_CHECK) contrib/scripts/check-go-fmt.sh
 	$(QUIET) contrib/scripts/check-go-fmt.sh
-	@$(ECHO_CHECK) contrib/scripts/lock-check.sh
-	$(QUIET) contrib/scripts/lock-check.sh
 	@$(ECHO_CHECK) vetting all GOFILES...
 	$(QUIET) $(GO_VET) \
     ./cmd/... \
     ./pkg/... \
-    ./test/...  \
     ./contrib/...
 	@$(ECHO_CHECK) golangci-lint
 	$(QUIET) golangci-lint run
@@ -70,39 +67,12 @@ fix-markdown-format:
 		--entrypoint sh -v $(ROOT_DIR):/workdir ghcr.io/igorshubovych/markdownlint-cli:latest \
 		-c '/usr/local/bin/markdownlint -f -c /workdir/.github/markdownlint.yaml -p /workdir/.github/markdownlintignore  /workdir/'
 
-.PHONY: lint-markdown-spell
-lint-markdown-spell:
-	if which mdspell &>/dev/null ; then \
-  			mdspell  -r --en-us --ignore-numbers --target-relative .github/.spelling --ignore-acronyms  '**/*.md' '!vendor/**/*.md' ; \
-  		else \
-			$(CONTAINER_ENGINE) container run --rm \
-				--entrypoint bash -v $(ROOT_DIR):/workdir  weizhoulan/spellcheck:latest  \
-				-c "cd /workdir ; mdspell  -r --en-us --ignore-numbers --target-relative .github/.spelling --ignore-acronyms  '**/*.md' '!vendor/**/*.md' " ; \
-  		fi
-
-.PHONY: lint-markdown-spell-colour
-lint-markdown-spell-colour:
-	if which mdspell &>/dev/null ; then \
-  			mdspell  -r --en-us --ignore-numbers --target-relative .github/.spelling --ignore-acronyms  '**/*.md' '!vendor/**/*.md' ; \
-  		else \
-			$(CONTAINER_ENGINE) container run --rm -it \
-				--entrypoint bash -v $(ROOT_DIR):/workdir  weizhoulan/spellcheck:latest  \
-				-c "cd /workdir ; mdspell  -r --en-us --ignore-numbers --target-relative .github/.spelling --ignore-acronyms  '**/*.md' '!vendor/**/*.md' " ; \
-  		fi
-
 .PHONY: lint-yaml
 lint-yaml:
 	@$(CONTAINER_ENGINE) container run --rm \
 		--entrypoint sh -v $(ROOT_DIR):/data cytopia/yamllint \
 		-c '/usr/bin/yamllint -c /data/.github/yamllint-conf.yml /data' ; \
 		if (($$?==0)) ; then echo "congratulations ,all pass" ; else echo "error, pealse refer <https://yamllint.readthedocs.io/en/stable/rules.html> " ; fi
-
-.PHONY: lint-openapi
-lint-openapi:
-	@$(CONTAINER_ENGINE) container run --rm \
-		-v $(ROOT_DIR):/spec redocly/openapi-cli lint api/v1/agent/openapi.yaml
-	@$(CONTAINER_ENGINE) container run --rm \
-		-v $(ROOT_DIR):/spec redocly/openapi-cli lint api/v1/controller/openapi.yaml
 
 .PHONY: lint-code-spell
 lint-code-spell:
@@ -156,10 +126,10 @@ dev-doctor:
 #============ tools ====================
 
 .PHONY: update-authors
-update-authors: ## Update AUTHORS file for Cilium repository.
+update-authors: ## Update AUTHORS file for the repository.
 	@echo "Updating AUTHORS file..."
 	@echo "The following people, in alphabetical order, have either authored or signed" > AUTHORS
-	@echo "off on commits in the Cilium repository:" >> AUTHORS
+	@echo "off on commits in the Enipam repository:" >> AUTHORS
 	@echo "" >> AUTHORS
 	@contrib/authorgen/authorgen.sh >> AUTHORS
 
@@ -199,38 +169,6 @@ endif
 	# ===== Update Go version in Dockerfiles.
 	$(QUIET) $(MAKE) -C images update-golang-image
 	@echo "Updated go version in image Dockerfiles to $(GO_IMAGE_VERSION)"
-
-.PHONY: openapi-validate-spec
-openapi-validate-spec: ## validate the given spec, like 'json/yaml'
-	$(QUIET) tools/scripts/swag.sh validate $(CURDIR)/api/v1/agent
-	$(QUIET) tools/scripts/swag.sh validate $(CURDIR)/api/v1/controller
-
-.PHONY: openapi-code-gen
-openapi-code-gen: openapi-validate-spec clean-openapi-code	## generate openapi source codes with the given spec.
-	$(QUIET) tools/scripts/swag.sh generate $(CURDIR)/api/v1/agent
-	$(QUIET) tools/scripts/swag.sh generate $(CURDIR)/api/v1/controller
-
-.PHONY: openapi-verify
-openapi-verify: openapi-validate-spec	## verify the current generated openapi source codes are not out of date with the given spec.
-	$(QUIET) tools/scripts/swag.sh verify $(CURDIR)/api/v1/agent
-	$(QUIET) tools/scripts/swag.sh verify $(CURDIR)/api/v1/controller
-
-.PHONY: clean-openapi-code
-clean-openapi-code:	## clean up generated openapi source codes
-	$(QUIET) tools/scripts/swag.sh clean $(CURDIR)/api/v1/agent
-	$(QUIET) tools/scripts/swag.sh clean $(CURDIR)/api/v1/controller
-
-.PHONY: clean-openapi-tmp
-clean-openapi-tmp:	## clean up '_openapi_tmp' dir
-	$(QUIET) rm -rf $(CURDIR)/_openapi_tmp
-
-.PHONY: openapi-ui
-openapi-ui:	## set up swagger-ui in local.
-	@$(CONTAINER_ENGINE) container run --rm -it -p 8080:8080 \
-		-e SWAGGER_JSON=/foo/agent-swagger.yml \
-		-v $(CURDIR)/api/v1/agent/openapi.yaml:/foo/agent-swagger.yml \
-		-v $(CURDIR)/api/v1/controller/openapi.yaml:/foo/controller-swagger.yml \
-		swaggerapi/swagger-ui
 
 # ==========================
 

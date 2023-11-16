@@ -29,7 +29,7 @@ CONTAINER_ENGINE?=docker
 
 #----------build-image--------
 REGISTER ?= ghcr.io
-GIT_REPO ?= yylt/eni-controller
+GIT_REPO ?= yylt/enipam
 CONTROLLER_IMAGE_NAME := ${REGISTER}/${GIT_REPO}/controller
 IMAGES := ${CONTROLLER_IMAGE_NAME}
 

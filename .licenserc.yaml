@@ -2,11 +2,11 @@
 header:
   - license:
       spdx-id: Apache-2.0
-      copyright-owner: eni-controller
+      copyright-owner: enipam
       pattern: |
         Copyright|Apache-2.0
       content: |
-        Copyright 2022 Authors of eni-controller
+        Copyright 2023 Authors of enipam
         SPDX-License-Identifier: Apache-2.0
     paths:
       - '**/*.go'
@@ -16,7 +16,7 @@ header:
     comment: on-failure
   - license:
       content: |
-        Copyright 2023 The Eni-controller Authors
+        Copyright 2023 The enipam Authors
         SPDX-License-Identifier: Apache-2.0
     paths:
       - '**/*.go'

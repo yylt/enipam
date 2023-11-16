@@ -1,4 +1,4 @@
-// Copyright 2022 Authors of eni-controller
+// Copyright 2023 Authors of enipam
 // SPDX-License-Identifier: Apache-2.0
 
 package v1alpha1

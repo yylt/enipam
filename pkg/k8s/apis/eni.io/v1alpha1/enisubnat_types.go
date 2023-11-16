@@ -20,7 +20,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-// SubnetSpec defines the desired state of SpiderSubnet.
+// SubnetSpec defines the desired state of EniSubnet.
 type SubnetSpec struct {
 	// +kubebuilder:validation:Enum=4;6
 	// +kubebuilder:validation:Optional
@@ -29,17 +29,28 @@ type SubnetSpec struct {
 	// +kubebuilder:validation:Required
 	Subnet string `json:"subnet-id"`
 
+	// vpc-id alias is network-id
 	// +kubebuilder:validation:Required
 	Vpc string `json:"vpc-id"`
 
+	// project-id alias is tenant-id
 	// +kubebuilder:validation:Optional
-	PreAllocated *int64 `json:"preAllocated,omitempty"`
+	Project string `json:"project-id"`
 
 	// +kubebuilder:validation:Optional
-	MinAvaliable *int64 `json:"minAvaliable,omitempty"`
+	PreAllocated *int `json:"preAllocated,omitempty"`
+
+	// +kubebuilder:validation:Optional
+	MinAvaliable *int `json:"minAvaliable,omitempty"`
+
+	// +kubebuilder:validation:Optional
+	NamespaceName []string `json:"namespaceName,omitempty"`
+
+	// +kubebuilder:validation:Optional
+	NodeName []string `json:"nodeName,omitempty"`
 }
 
-// SubnetStatus defines the observed state of SpiderSubnet.
+// SubnetStatus defines the observed state of Subnet.
 type SubnetStatus struct {
 	// +kubebuilder:validation:Optional
 	SubnatName *string `json:"subnat-name,omitempty"`
@@ -50,9 +61,11 @@ type SubnetStatus struct {
 	// +kubebuilder:validation:Optional
 	Cidr *string `json:"cidr,omitempty"`
 
-	// node:ippoolname
 	// +kubebuilder:validation:Optional
-	Used map[string][]string `json:"used,omitempty"`
+	NamespaceName []string `json:"namespaceName,omitempty"`
+
+	// +kubebuilder:validation:Optional
+	NodeName []string `json:"nodeName,omitempty"`
 }
 
 // +kubebuilder:resource:categories={enisubnat},path="enisubnats",scope="Cluster",shortName={es},singular="enisubnat"
@@ -64,7 +77,7 @@ type SubnetStatus struct {
 // +genclient
 // +genclient:nonNamespaced
 
-// SpiderSubnet is the Schema for the spidersubnets API.
+// EniSubnet is the Schema for the enisubnets API.
 type EniSubnet struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`

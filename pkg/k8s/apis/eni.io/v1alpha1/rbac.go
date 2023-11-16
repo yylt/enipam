@@ -1,4 +1,4 @@
-// Copyright 2022 Authors of eni-controller
+// Copyright 2023 Authors of enipam
 // SPDX-License-Identifier: Apache-2.0
 
 // +kubebuilder:rbac:groups=eni.io,resources=enisubnat,verbs=get;list;watch;create;update;patch;delete
