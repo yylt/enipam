@@ -4,18 +4,18 @@ kind: CustomResourceDefinition
 metadata:
   annotations:
     controller-gen.kubebuilder.io/version: (unknown)
-  name: enisubnats.eni.io
+  name: subnats.eni.io
 spec:
   group: eni.io
   names:
     categories:
-    - enisubnat
-    kind: EniSubnet
-    listKind: EniSubnetList
-    plural: enisubnats
+    - subnat
+    kind: Subnet
+    listKind: SubnetList
+    plural: subnats
     shortNames:
-    - es
-    singular: enisubnat
+    - esn
+    singular: subnat
   scope: Cluster
   versions:
   - additionalPrinterColumns:
@@ -34,7 +34,7 @@ spec:
     name: v1alpha1
     schema:
       openAPIV3Schema:
-        description: EniSubnet is the Schema for the enisubnets API.
+        description: Subnet is the Schema for the subnets API.
         properties:
           apiVersion:
             description: 'APIVersion defines the versioned schema of this representation

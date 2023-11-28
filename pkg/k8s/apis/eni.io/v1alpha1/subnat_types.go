@@ -68,7 +68,7 @@ type SubnetStatus struct {
 	NodeName []string `json:"nodeName,omitempty"`
 }
 
-// +kubebuilder:resource:categories={enisubnat},path="enisubnats",scope="Cluster",shortName={es},singular="enisubnat"
+// +kubebuilder:resource:categories={subnat},path="subnats",scope="Cluster",shortName={esn},singular="subnat"
 // +kubebuilder:printcolumn:JSONPath=".spec.vpc-id",description="vpc",name="VPC",type=string
 // +kubebuilder:printcolumn:JSONPath=".spec.subnet-id",description="subnet",name="SUBNET",type=string
 // +kubebuilder:printcolumn:JSONPath=".status.cidr",description="cidr",name="CIDR",type=string
@@ -77,8 +77,8 @@ type SubnetStatus struct {
 // +genclient
 // +genclient:nonNamespaced
 
-// EniSubnet is the Schema for the enisubnets API.
-type EniSubnet struct {
+// Subnet is the Schema for the subnets API.
+type Subnet struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`
 
@@ -89,13 +89,13 @@ type EniSubnet struct {
 // +kubebuilder:object:root=true
 
 // EniSubnetList contains a list of EniSubnet.
-type EniSubnetList struct {
+type SubnetList struct {
 	metav1.TypeMeta `json:",inline"`
 	metav1.ListMeta `json:"metadata,omitempty"`
 
-	Items []EniSubnet `json:"items"`
+	Items []Subnet `json:"items"`
 }
 
 func init() {
-	SchemeBuilder.Register(&EniSubnetList{}, &EniSubnet{})
+	SchemeBuilder.Register(&SubnetList{}, &Subnet{})
 }

@@ -37,7 +37,10 @@ type Manager interface {
 	IterNode(fn func(*NodeInfo) error)
 
 	// update node.subnatns
-	UpdateNode(sn *Sninfo) error
+	UpdateNode(sn *Sninfo, ev util.Event) error
+
+	// update node.subnatns
+	UpdatePool(mainip string, ev util.Event, ips ...string) error
 
 	// get allocatedinfo now
 	GetAllocated() *AllocatedInfo
@@ -66,7 +69,7 @@ type controller struct {
 	// infra api,
 	api infra.Client
 
-	//
+	// subnat operator
 	Subnater Subnater
 
 	// trigger
@@ -210,36 +213,49 @@ func (n *controller) GetNode(no *NodeInfo) {
 			return
 		}
 	}
-	return
+}
+
+// update pool, ips is all could used array.
+func (n *controller) UpdatePool(mainip string, ev util.Event, ips ...string) error {
+	pool := n.poolmg.GetPoolByIp(mainip)
+	if pool == nil {
+		return fmt.Errorf("not found pool by mainip %s", mainip)
+	}
+	clear(pool.CapIp)
+	for _, ip := range ips {
+		pool.CapIp[ip] = struct{}{}
+	}
+
+	return n.poolmg.UpdatePool(pool, ev)
 }
 
 // update subnat info on every node.
 // subnatns not used yet.
-func (n *controller) UpdateNode(sninfo *Sninfo) error {
+func (n *controller) UpdateNode(sninfo *Sninfo, ev util.Event) error {
 	if sninfo == nil {
 		return fmt.Errorf("subnat is null or nodenmae is null")
 	}
-	var (
-		err error
-	)
+
 	n.mu.Lock()
 	defer n.mu.Unlock()
 	for _, info := range n.node {
 		if !sninfo.Node.Contains(info.Name) {
+			// skip controler
 			continue
 		}
 		info.subnat.Add(sninfo.Name)
-		// check pool hadnot used.
-		if sninfo.Deleted {
+
+		// check pool had released
+		if ev == util.DeleteE {
 			pools := n.poolmg.GetPoolBySubnat(sninfo.Name)
 			for _, p := range pools {
 				if len(p.UsedIp) != 0 {
-					err = fmt.Errorf("pool %s not released yet.", p.MainIp)
+					return fmt.Errorf("pool %s not released yet.", p.MainIp)
 				}
 			}
 		}
 	}
-	return err
+	return nil
 }
 
 // Note nodeinfo not deepcopy.
@@ -261,14 +277,15 @@ func (n *controller) IterNode(fn func(*NodeInfo) error) {
 // 1 update pool, include subnat and namespaces
 func (n *controller) triggerHandler() {
 	var (
-		inst         = &infra.Instance{}
-		subnatDelete = map[string]struct{}{}
+		inst      = &infra.Instance{}
+		delsubnat = map[string]struct{}{}
 
 		ev util.Event
 	)
 	n.Subnater.IterInfo(func(s *Sninfo) error {
 		if s.Deleted {
-			subnatDelete[s.Name] = struct{}{}
+			klog.Infof("node controller, subnat %s will be removed", s.Name)
+			delsubnat[s.Name] = struct{}{}
 		}
 		return nil
 	})
@@ -284,7 +301,8 @@ func (n *controller) triggerHandler() {
 		n.api.AddInstance(inst)
 
 		newinst := n.api.GetInstance(infra.FilterOpt{Instance: noinfo.NodeId})
-		if newinst == nil {
+		if newinst == nil || len(newinst.Interface) == 0 {
+			klog.Infof("node %s interface is null, not handler", inst.NodeName)
 			continue
 		}
 		// update ippool namesapce and capip
@@ -294,10 +312,13 @@ func (n *controller) triggerHandler() {
 			if pool == nil {
 				continue
 			}
-			if _, ok := subnatDelete[pool.Subnat]; ok {
+			if _, ok := delsubnat[pool.Subnat]; ok {
 				ev = util.DeleteE
 			} else {
 				ev = util.UpdateE
+			}
+			if noinfo.deleted {
+				ev = util.DeleteE
 			}
 			err := n.poolmg.UpdatePool(pool, ev)
 			if err != nil {
@@ -372,7 +393,7 @@ func (n *controller) getPool(noinfo *NodeInfo, mainif *infra.Interface) *ippool.
 	for _, sinfo := range mainif.Second {
 		pool.CapIp[sinfo.Ip] = struct{}{}
 	}
-	//Note. same subnat can not be in same node.
+
 	sninfo.Id = mainif.SubnatId
 	n.Subnater.GetInfoById(sninfo)
 	if sninfo.Name == "" {

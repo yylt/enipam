@@ -40,9 +40,6 @@ type Pool struct {
 	// node name
 	NodeName string
 
-	// Deleted setted by nodeController.
-	Deleted bool
-
 	// interface ip, it is not nodeip
 	MainIp string
 

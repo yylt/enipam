@@ -1,8 +1,8 @@
 # Copyright 2023 Authors of enipam
 # SPDX-License-Identifier: Apache-2.0
 
-ARG BASE_IMAGE=docker.io/library/busybox
-ARG GOLANG_IMAGE=docker.io/library/golang:1.21
+ARG BASE_IMAGE=docker.io/library/busybox:1.36.1
+ARG GOLANG_IMAGE=docker.io/library/golang:1.21.3
 
 #======= build bin ==========
 FROM --platform=${BUILDPLATFORM} ${GOLANG_IMAGE} as builder
@@ -18,9 +18,8 @@ COPY . /src
 WORKDIR /src/cmd/eni-controller
 RUN  make GOARCH=${TARGETARCH}   \
         RACE=${RACE} NOSTRIP=${NOSTRIP} NOOPT=${NOOPT} QUIET_MAKE=${QUIET_MAKE} \
-        DESTDIR_BIN=/tmp/install/${TARGETOS}/${TARGETARCH}/bin \
-        DESTDIR_BASH_COMPLETION=/tmp/install/${TARGETOS}/${TARGETARCH}/bash-completion \
-        all install install-bash-completion
+        DESTDIR_BIN=/tmp/install/${TARGETOS}/${TARGETARCH}/bin/ \
+        all install
 
 #====== release image =======
 
@@ -40,9 +39,5 @@ ENV GIT_COMMIT_TIME=${GIT_COMMIT_TIME}
 ARG VERSION
 ENV VERSION=${VERSION}
 
-RUN echo ". /etc/profile.d/bash_completion.sh" >> /etc/bash.bashrc
-
 COPY --from=builder /tmp/install/${TARGETOS}/${TARGETARCH}/bin/*   /usr/bin/
-COPY --from=builder /tmp/install/${TARGETOS}/${TARGETARCH}/bash-completion/*  /etc/bash_completion.d/
-
 CMD ["/usr/bin/eni-controller daemon"]

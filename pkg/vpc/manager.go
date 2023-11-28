@@ -103,8 +103,8 @@ func (v *Manager) NeedLeaderElection() bool {
 // create default subnat after start.
 func (v *Manager) Start(ctx context.Context) error {
 	var (
-		subnat        = &eniv1alpha1.EniSubnet{}
-		defaultsubnat *eniv1alpha1.EniSubnet
+		subnat        = &eniv1alpha1.Subnet{}
+		defaultsubnat *eniv1alpha1.Subnet
 		nsname        = types.NamespacedName{Name: defaultSubnat}
 		err           error
 	)
@@ -146,7 +146,7 @@ func (v *Manager) probe(mgr ctrl.Manager) error {
 		return err
 	}
 	return ctrl.NewControllerManagedBy(mgr).
-		For(&eniv1alpha1.EniSubnet{}).
+		For(&eniv1alpha1.Subnet{}).
 		Complete(v)
 }
 
@@ -154,7 +154,7 @@ func (v *Manager) probe(mgr ctrl.Manager) error {
 // 2 vpcEvent trigger
 func (v *Manager) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	var (
-		in  = &eniv1alpha1.EniSubnet{}
+		in  = &eniv1alpha1.Subnet{}
 		err error
 	)
 
@@ -194,7 +194,7 @@ func (v *Manager) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result,
 	}
 
 	// when node is null thus mean all node which handle by nodemg
-	// but update in trigger, not here too.
+	// but update in trigger, not here.
 	for _, no := range in.Status.NodeName {
 		sn.Node.Add(no)
 	}
@@ -203,11 +203,12 @@ func (v *Manager) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result,
 	if !in.ObjectMeta.DeletionTimestamp.IsZero() {
 		sn.Deleted = true
 		// removeFinalize after allnode is ready.
-		err := v.nodemg.UpdateNode(sn)
+		err := v.nodemg.UpdateNode(sn, util.DeleteE)
 		if err == nil {
 			controllerutil.RemoveFinalizer(in, node.FinializerController)
+		} else {
+			klog.Errorf("delete subnat %s, but update node failed: %s", in.Name, err)
 		}
-		klog.Errorf("delete subnat failed: %s", err)
 		return ctrl.Result{}, nil
 	}
 	v.vpctrigger.Trigger()
@@ -279,24 +280,24 @@ func (v *Manager) getNamespace() []string {
 	return ns
 }
 
-// add .status
-// include node and namespace, and so on.
+// update .status. like node, namespace etc...
 func (v *Manager) triggerVpcHandler() {
 	var (
-		in     = &eniv1alpha1.EniSubnet{}
+		in     = &eniv1alpha1.Subnet{}
 		nslist []string
 		nolist []string
 
 		md = &infra.Metadata{}
 	)
+	// get all namespace
+	// TODO namespace trigger?
 	nslist = v.getNamespace()
 
-	// loop nodes which handle is all. thus mean not all node to be managed.
+	// Notice. will not manage all node
 	v.nodemg.IterNode(func(ni *node.NodeInfo) error {
-		if ni == nil {
-			return nil
+		if ni != nil {
+			nolist = append(nolist, ni.Name)
 		}
-		nolist = append(nolist, ni.Name)
 		return nil
 	})
 
@@ -305,7 +306,7 @@ func (v *Manager) triggerVpcHandler() {
 	// in vpc.nodes, only record nodename setted in spec.
 	// loop nodes and namespace in subnat
 	for sn, info := range v.subnats {
-		if info == nil || info.Nemaspace == nil || info.Node == nil {
+		if info == nil {
 			continue
 		}
 		err := util.Backoff(func() error {
@@ -321,6 +322,7 @@ func (v *Manager) triggerVpcHandler() {
 		md.SubnatId = in.Spec.Subnet
 		md.VpcId = in.Spec.Vpc
 		v.api.GetMetadata(md)
+
 		inCopy.Status.Cidr = &md.Cidr
 		inCopy.Status.VpcName = &md.Vpc
 		inCopy.Status.SubnatName = &md.Subnat
@@ -343,8 +345,8 @@ func (v *Manager) triggerVpcHandler() {
 			return v.Client.Patch(v.ctx, inCopy, client.MergeFrom(in))
 		})
 		if err != nil {
-			klog.Errorf("patch subnat failed: %v", err)
-			return
+			klog.Errorf("update subnat %s status failed: %v", in.Name, err)
+			continue
 		}
 	}
 }
@@ -356,9 +358,14 @@ func (v *Manager) triggerNodeHandler() {
 	v.mu.RLock()
 	for _, info := range v.subnats {
 		if info == nil || info.Nemaspace == nil || info.Node == nil {
+			// do not update node when subnat not include any node or any namespace
 			continue
 		}
-		v.nodemg.UpdateNode(info)
+		ev := util.UpdateE
+		if info.Deleted {
+			ev = util.DeleteE
+		}
+		v.nodemg.UpdateNode(info, ev)
 	}
 	v.mu.RUnlock()
 
@@ -375,10 +382,10 @@ func (v *Manager) triggerNodeHandler() {
 }
 
 // spec from apicfg or awscfg
-func (v *Manager) defaultEniSubnat() (*eniv1alpha1.EniSubnet, error) {
+func (v *Manager) defaultEniSubnat() (*eniv1alpha1.Subnet, error) {
 	var (
 		err    error
-		subnat = &eniv1alpha1.EniSubnet{
+		subnat = &eniv1alpha1.Subnet{
 			ObjectMeta: metav1.ObjectMeta{
 				Name: defaultSubnat,
 			},
@@ -422,7 +429,7 @@ func (v *Manager) NodesAllocatedEvent(info *node.AllocatedInfo) *Event {
 		nodeinfo = &node.NodeInfo{}
 	)
 
-	// NodeAllocat mean: node need number of interface
+	// NodeAllocat need number of interface
 	for noip, snset := range info.NodeAllocated {
 		nodeinfo.NodeIp = noip
 		nodeinfo.NodeId = ""
@@ -437,11 +444,11 @@ func (v *Manager) NodesAllocatedEvent(info *node.AllocatedInfo) *Event {
 	for noip := range info.NodeRemove {
 		instance := v.api.GetInstance(infra.FilterOpt{Ip: noip})
 		if instance == nil {
-			klog.Errorf("get instance failed by ip %s", noip)
-			return nil
+			klog.Warningf("instance not found search by ip %s", noip)
+			continue
 		}
 		for _, ifin := range instance.Interface {
-			if ifin == nil || ifin.Ip == noip {
+			if ifin == nil || ifin.Ip != noip {
 				continue
 			}
 			ev.nodeRemove[instance.Id] = append(ev.nodeRemove[instance.Id], ifin.Id)
@@ -449,55 +456,64 @@ func (v *Manager) NodesAllocatedEvent(info *node.AllocatedInfo) *Event {
 	}
 
 	var (
-		podadd int
-		podip  = map[string]struct{}{} // cache
+		podadd   int
+		reserved = hashset.New()
 	)
 	for mainip, poolinfo := range info.PodAllocated {
 		// podinfo by per node-interface
-		// . podwant = max( preallocated - cap, used + minAvaliable - cap)
-		// . podremove = cap - minAvaliab - used && cap > preallocated
+		// . podwant = minAvaliable - (cap - used) <0 ? 0
+		// . podremove = cap - used - preallocated <0 ? 0
 		if poolinfo == nil {
 			continue
 		}
 		podadd = 0
 		preAllocated, minAvaliable := v.getPolicy(poolinfo.Subnat)
-		num1 := preAllocated - len(poolinfo.CapIp)
-		num2 := len(poolinfo.UsedIp) + minAvaliable - len(poolinfo.CapIp)
-		if num1 < num2 {
-			if num2 > 0 {
-				podadd = num2
-			}
-		} else {
-			if num1 > 0 {
-				podadd = num1
-			}
+		addnum := len(poolinfo.UsedIp) + minAvaliable - len(poolinfo.CapIp)
+		if addnum > 0 {
+			podadd = addnum
 		}
 
 		ifinfo := v.api.GetInterface(infra.FilterOpt{Ip: mainip})
 		if ifinfo == nil {
-			klog.Errorf("not found interface id by ip %s", mainip)
-			return nil
+			klog.Warningf("not found interface id by ip %s", mainip)
+			continue
 		}
-		if podadd > 0 {
-			ev.podAdd[ifinfo.Id] = podadd
-		}
+		ev.podAdd[ifinfo.Id] = podadd
 
-		delnum := len(poolinfo.CapIp) - minAvaliable - len(poolinfo.UsedIp)
-		if len(poolinfo.CapIp) > preAllocated && delnum > 0 {
-			for k := range podip {
-				delete(podip, k)
+		delnum := len(poolinfo.CapIp) - preAllocated - len(poolinfo.UsedIp)
+		if delnum > 0 {
+			reserved.Clear()
+			delips := []string{}
+
+			for uip := range poolinfo.UsedIp {
+				reserved.Add(uip)
 			}
-			for usedip := range poolinfo.UsedIp {
-				podip[usedip] = struct{}{}
-			}
+
 			for capip := range poolinfo.CapIp {
-				//TODO add remove ips to exclude in ippool
-				if _, ok := podip[capip]; !ok {
-					ev.podRemove[ifinfo.Id] = append(ev.podRemove[ifinfo.Id], capip)
-					if len(ev.podRemove[ifinfo.Id]) == delnum {
-						break
+				ok := reserved.Contains(capip)
+				if !ok {
+					if reserved.Size() >= len(poolinfo.CapIp)-delnum {
+						// remove ip
+						delips = append(delips, capip)
+						continue
 					}
+					reserved.Add(capip)
 				}
+			}
+			var addip = make([]string, reserved.Size())
+			for i, key := range reserved.Values() {
+				ip := key.(string)
+				addip[i] = ip
+			}
+			klog.Infof("mark could used list %s in mainip %s", reserved.String(), ifinfo.Ip)
+			// update ip list which could use
+			err := util.Backoff(func() error {
+				return v.nodemg.UpdatePool(ifinfo.Ip, util.UpdateE, addip...)
+			})
+
+			if err == nil {
+				klog.Infof("delete %s from mainip %s", delips, ifinfo.Ip)
+				ev.podRemove[ifinfo.Id] = append(ev.podRemove[ifinfo.Id], delips...)
 			}
 		}
 	}

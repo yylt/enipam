@@ -60,7 +60,7 @@ type NodeInfo struct {
 
 	sync.RWMutex
 
-	// every node maybe belong to multi subnat.
+	// subnatname
 	subnat *hashset.Set
 }
 

@@ -44,11 +44,13 @@ func (i *infraops) run() {
 		select {
 		case <-i.ctx.Done():
 			klog.Warningf("receive context exit")
+			return
 		case v, ok := <-i.evch:
 			if ok {
 				i.processWork(v)
 			} else {
 				klog.Warningf("infra event channel closed")
+				return
 			}
 		}
 	}
@@ -93,7 +95,7 @@ func (i *infraops) processWork(ev *Event) {
 		}
 		nodeevent[tmp.DeepCopy()] = num
 	}
-	// 1 node port
+	// 1 instance add
 	for info, num := range nodeevent {
 		if !i.api.HadPortOnInstance(info.NodeId, num) {
 			ninfo := info.DeepCopy()
@@ -112,14 +114,14 @@ func (i *infraops) processWork(ev *Event) {
 		klog.Infof("submit workCount %d on create node port", count)
 	}
 
-	// 2 node attach
+	// 2 instance attach/detach
 	count, err = i.handlerNodeEvent(ev, nodeevent)
 	klog.Infof("submit workCount %d on attach/detach node port, msg: %v", count, err)
 	if err != nil {
 		return
 	}
 
-	// 3 port port
+	// 3 interface add
 	count = 0
 	for info, num := range ev.podAdd {
 		if !i.api.HadPortOnInterface(info, num) {
@@ -140,7 +142,7 @@ func (i *infraops) processWork(ev *Event) {
 		klog.Infof("after create pod port, submit work number  %d", count)
 	}
 
-	// 4 port assign
+	// 4 port assign/unssign
 	count, err = i.handlerPodEvent(ev)
 	klog.Infof("submit workCount %d on port assign/unssign, msg: %v", count, err)
 }

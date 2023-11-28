@@ -31,10 +31,10 @@ install-bash-completion:
 
 
 # ============ build-load-image ============
-.PHONY: build_image
-build_image:
+.PHONY: image
+image:
 	@for NAME in $(IMAGES); do \
-		docker buildx build --build-arg RACE --build-arg GIT_COMMIT_VERSION=$(GIT_COMMIT_VERSION) \
+		docker build --build-arg RACE --build-arg GIT_COMMIT_VERSION=$(GIT_COMMIT_VERSION) \
 				--build-arg GIT_COMMIT_TIME=$(GIT_COMMIT_TIME) \
 				--build-arg VERSION=$(GIT_COMMIT_VERSION) \
 				--file $(ROOT_DIR)/images/"$${NAME##*/}"/Dockerfile \

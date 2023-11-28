@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"reflect"
 
 	sync "github.com/yylt/enipam/pkg/lock"
 
@@ -159,6 +160,8 @@ func (n *controller) GetPoolBySubnat(name string) []*ippool.Pool {
 }
 
 // update ippool resource
+// update Event: ippool.Pool depend on capip to update old
+// delete Event: will mark all capip as excludeip, can not used.
 func (n *controller) UpdatePool(pl *ippool.Pool, ev util.Event) error {
 	// valid check
 	if pl == nil || pl.MainIp == "" {
@@ -202,31 +205,23 @@ func (n *controller) UpdatePool(pl *ippool.Pool, ev util.Event) error {
 			}
 			return nil
 		}
-		if len(pl.CapIp) == 0 {
-			n.mu.Lock()
-			defer n.mu.Unlock()
-			p, ok := n.pools[pl.MainIp]
-			if !ok {
-				// TODO do nothing
-				return nil
-			}
 
-			if p.Deleted {
-				return nil
-			}
-			p.Deleted = true
-			// mean delete ippool resource
+		if !reflect.DeepEqual(poolCopy.Spec.IPs, poolCopy.Spec.ExcludeIPs) {
+			// remove all ips and update pool
+			poolCopy.Spec.ExcludeIPs = poolCopy.Spec.IPs
 			util.Backoff(func() error {
-				return n.Delete(n.ctx, pool)
+				return n.Client.Patch(n.ctx, poolCopy, client.MergeFrom(pool))
 			})
-			if pool.Status.AllocatedIPCount != nil && *pool.Status.AllocatedIPCount != 0 {
-				return fmt.Errorf("had ip allocated, can not remove")
-			}
+			return fmt.Errorf("capacityIP is not equal exlucdeIP, can not remove now")
 		}
-
-		return util.Backoff(func() error {
-			return n.Client.Patch(n.ctx, poolCopy, client.MergeFrom(pool))
+		if pool.Status.AllocatedIPCount != nil && *pool.Status.AllocatedIPCount != 0 {
+			return fmt.Errorf("some ip allocated, can not remove now")
+		}
+		// delete when notfound which mean all released.
+		_ = util.Backoff(func() error {
+			return n.Delete(n.ctx, pool)
 		})
+		return fmt.Errorf("pool resource existed")
 
 	case util.UpdateE:
 		if err != nil && apierrors.IsNotFound(err) {
@@ -261,26 +256,4 @@ func (n *controller) UpdatePool(pl *ippool.Pool, ev util.Event) error {
 
 func (n *controller) RegistCallback(fn ippool.CallbackFn) {
 	n.callfns = append(n.callfns, fn)
-}
-
-func (n *controller) UpdateEvent(pl *ippool.Pool) bool {
-	var (
-		ok = true
-	)
-	// it is 'and' logic
-	for _, fn := range n.callfns {
-		fn(util.UpdateE, pl)
-	}
-	return ok
-}
-
-func (n *controller) DeleteEvent(pl *ippool.Pool) bool {
-	var (
-		ok = true
-	)
-	// it is 'and' logic
-	for _, fn := range n.callfns {
-		fn(util.DeleteE, pl)
-	}
-	return ok
 }
