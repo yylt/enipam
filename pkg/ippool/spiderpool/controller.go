@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"reflect"
 
+	"github.com/yylt/enipam/pkg"
 	sync "github.com/yylt/enipam/pkg/lock"
 
 	"github.com/emirpasic/gods/sets/hashset"
@@ -32,7 +33,10 @@ type controller struct {
 	// key: mainip in node
 	pools map[string]*ippool.Pool
 
-	callfns []ippool.CallbackFn
+	// callback channel, store mainid.
+	ch chan string
+
+	postfns []util.CallbackFn
 }
 
 var _ ippool.Manager = &controller{}
@@ -40,6 +44,8 @@ var _ ippool.Manager = &controller{}
 func NewControllerManager(mgr ctrl.Manager, ctx context.Context) (ippool.Manager, error) {
 	n := &controller{
 		Client: mgr.GetClient(),
+		pools:  map[string]*ippool.Pool{},
+		ch:     make(chan string, 16),
 		ctx:    ctx,
 	}
 
@@ -47,7 +53,32 @@ func NewControllerManager(mgr ctrl.Manager, ctx context.Context) (ippool.Manager
 	return n, err
 }
 
+func (n *controller) handlerCallback() {
+
+	for {
+		select {
+		case name, ok := <-n.ch:
+			if !ok {
+				return
+			}
+			var ori *ippool.Pool
+			n.mu.RLock()
+			v, ok := n.pools[name]
+			if ok {
+				ori = v.DeepCopy()
+			}
+			n.mu.RUnlock()
+			for _, fn := range n.postfns {
+				fn(ori)
+			}
+
+		case <-n.ctx.Done():
+			return
+		}
+	}
+}
 func (n *controller) probe(mgr ctrl.Manager) error {
+	go n.handlerCallback()
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&spiderpoolv2beta1.SpiderIPPool{}).
 		WithEventFilter(predicate.NewPredicateFuncs(func(object client.Object) bool {
@@ -72,37 +103,33 @@ func (n *controller) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	namespaceName := req.NamespacedName
 	if err = n.Get(ctx, namespaceName, in); err != nil {
 		if apierrors.IsNotFound(err) {
-			klog.Info(fmt.Sprintf("Counld not found spiderpool ippool %s.", namespaceName.Name))
+			n.mu.Lock()
+			defer n.mu.Unlock()
+			delete(n.pools, req.Name)
+			klog.Info(fmt.Sprintf("remove pool %s from cache", req.Name))
 			return ctrl.Result{}, nil
-		} else {
-			klog.Errorf("Error get spiderpool ippool: %s", err)
-			return ctrl.Result{}, err
 		}
-	}
-	if !in.ObjectMeta.DeletionTimestamp.IsZero() {
-		if in.Status.AllocatedIPCount != nil && *in.Status.AllocatedIPCount == 0 {
-			controllerutil.RemoveFinalizer(in, ippool.FinializerController)
-		}
-		return ctrl.Result{}, nil
+		klog.Errorf("Error get spiderpool ippool: %s", err)
+		return ctrl.Result{}, err
 	}
 
-	controllerutil.AddFinalizer(in, ippool.FinializerController)
+	subnat, ok := in.Annotations[ippool.SubnatAnnotationsKey]
+	if !ok {
+		klog.Warningf("not found annotation \"%s\" for subnat name, skip", ippool.SubnatAnnotationsKey)
+		return ctrl.Result{}, nil
+	}
+	if len(in.Spec.NodeName) != 1 {
+		klog.Warning("pool %s, the nodename should only one", in.Name)
+	}
 
 	n.mu.Lock()
 	defer n.mu.Unlock()
-	subnat, ok := in.Annotations[ippool.SubnatAnnotationsKey]
-	if !ok {
-		return ctrl.Result{}, nil
-	}
-	if len(in.Spec.NodeName) == 0 {
-		klog.Warning("spiderippool %s nodename should not be zero.", in.Name)
-	}
 	mainip := in.Name
 	pool, ok := n.pools[mainip]
 	if !ok {
 		n.pools[mainip] = &ippool.Pool{
-			CapIp:     map[string]struct{}{},
-			UsedIp:    map[string]struct{}{},
+			CapIp:     hashset.New(),
+			UsedIp:    hashset.New(),
 			Namespace: hashset.New(),
 			Subnat:    subnat,
 			NodeName:  in.Spec.NodeName[0],
@@ -112,11 +139,7 @@ func (n *controller) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	for ns := range in.Spec.NamespaceName {
 		pool.Namespace.Add(ns)
 	}
-	for _, ip := range in.Spec.IPs {
-		if _, exist := pool.CapIp[ip]; !exist {
-			pool.CapIp[ip] = struct{}{}
-		}
-	}
+	pool.CapIp.Add(in.Spec.IPs)
 
 	if in.Status.AllocatedIPs != nil {
 		var (
@@ -128,13 +151,31 @@ func (n *controller) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 			return ctrl.Result{}, nil
 		}
 		for ip := range ipmap {
-			if _, exist := pool.UsedIp[ip]; !exist {
-				pool.UsedIp[ip] = struct{}{}
-			}
+			pool.UsedIp.Add(ip)
 		}
 	}
 
+	if !in.ObjectMeta.DeletionTimestamp.IsZero() {
+		return ctrl.Result{}, nil
+	}
+	if !controllerutil.ContainsFinalizer(in, pkg.FinializerController) {
+		inCopy := in.DeepCopy()
+		controllerutil.AddFinalizer(inCopy, pkg.FinializerController)
+		return ctrl.Result{}, n.Client.Patch(n.ctx, inCopy, client.MergeFrom(in))
+	}
+
 	return ctrl.Result{}, nil
+}
+
+func (n *controller) EachPool(fn func(*ippool.Pool) error) {
+	n.mu.RLock()
+	defer n.mu.RUnlock()
+	for _, v := range n.pools {
+		err := fn(v.DeepCopy())
+		if err != nil {
+			return
+		}
+	}
 }
 
 func (n *controller) GetPoolByIp(mainip string) *ippool.Pool {
@@ -159,101 +200,149 @@ func (n *controller) GetPoolBySubnat(name string) []*ippool.Pool {
 	return pools
 }
 
-// update ippool resource
-// update Event: ippool.Pool depend on capip to update old
-// delete Event: will mark all capip as excludeip, can not used.
-func (n *controller) UpdatePool(pl *ippool.Pool, ev util.Event) error {
+func (n *controller) deletePool(pl *ippool.Pool) error {
+	var (
+		pool = &spiderpoolv2beta1.SpiderIPPool{}
+	)
+	if pl == nil || pl.MainId == "" {
+		err := fmt.Errorf("could not delete pool, id is null")
+		return err
+	}
+	err := n.Get(n.ctx, types.NamespacedName{Name: pl.MainId}, pool)
+	if err != nil {
+		if !apierrors.IsNotFound(err) {
+			return err
+		}
+		// it is relased.
+		return nil
+	}
+	poolCopy := pool.DeepCopy()
+	// always try delete
+	defer func() {
+		_ = util.Backoff(func() error {
+			return n.Delete(n.ctx, pool)
+		})
+	}()
+
+	if !reflect.DeepEqual(poolCopy.Spec.IPs, poolCopy.Spec.ExcludeIPs) {
+		// remove all ips and update pool, make sure no ip could be used.
+		poolCopy.Spec.ExcludeIPs = poolCopy.Spec.IPs
+		util.Backoff(func() error {
+			return n.Client.Patch(n.ctx, poolCopy, client.MergeFrom(pool))
+		})
+		return fmt.Errorf("capacityIP is not equal exlucdeIP, can not remove now")
+	}
+	if pool.Status.AllocatedIPCount != nil && *pool.Status.AllocatedIPCount != 0 {
+		return fmt.Errorf("some ip allocated, can not remove now")
+	}
+
+	controllerutil.RemoveFinalizer(poolCopy, pkg.FinializerController)
+	util.Backoff(func() error {
+		return n.Client.Patch(n.ctx, poolCopy, client.MergeFrom(pool))
+	})
+
+	return fmt.Errorf("pool resource existed")
+}
+
+func (n *controller) updatePool(pl *ippool.Pool) error {
 	// valid check
-	if pl == nil || pl.MainIp == "" {
-		err := fmt.Errorf("update pool failed, mainip is null")
+	if pl.Subnat == "" {
+		err := fmt.Errorf("could not update pool, subnat is null")
 		return err
 	}
 
 	var (
-		pool   = &spiderpoolv2beta1.SpiderIPPool{}
-		subnat = pl.Subnat
-
-		ns []string
+		pool = &spiderpoolv2beta1.SpiderIPPool{}
+		ns   []string
 
 		excludips, ips []string
 	)
 
-	err := n.Get(n.ctx, types.NamespacedName{Name: pl.MainIp}, pool)
-
+	err := n.Get(n.ctx, types.NamespacedName{Name: pl.MainId}, pool)
+	if err != nil {
+		return err
+	}
+	if !pool.ObjectMeta.DeletionTimestamp.IsZero() {
+		return fmt.Errorf("pool %v had been deleted", pl.MainId)
+	}
 	poolCopy := pool.DeepCopy()
 	// calcute before
 	for _, v := range pl.Namespace.Values() {
 		ns = append(ns, v.(string))
 	}
-	for ip := range pl.CapIp {
-		ips = append(ips, ip)
+	for _, ip := range pl.CapIp.Values() {
+		ips = append(ips, ip.(string))
 	}
 	for _, ip := range poolCopy.Spec.IPs {
-		_, ok := pl.CapIp[ip]
-		if !ok {
+		if !pl.CapIp.Contains(ip) {
 			excludips = append(excludips, ip)
 		}
 	}
+
+	poolCopy.Spec.NamespaceName = ns
 	poolCopy.Spec.ExcludeIPs = excludips
 	poolCopy.Spec.IPs = ips
-	// update spec.Ips
-	switch ev {
-	case util.DeleteE:
-		if err != nil {
-			if !apierrors.IsNotFound(err) {
-				return err
-			}
-			return nil
-		}
 
-		if !reflect.DeepEqual(poolCopy.Spec.IPs, poolCopy.Spec.ExcludeIPs) {
-			// remove all ips and update pool
-			poolCopy.Spec.ExcludeIPs = poolCopy.Spec.IPs
-			util.Backoff(func() error {
-				return n.Client.Patch(n.ctx, poolCopy, client.MergeFrom(pool))
-			})
-			return fmt.Errorf("capacityIP is not equal exlucdeIP, can not remove now")
-		}
-		if pool.Status.AllocatedIPCount != nil && *pool.Status.AllocatedIPCount != 0 {
-			return fmt.Errorf("some ip allocated, can not remove now")
-		}
-		// delete when notfound which mean all released.
-		_ = util.Backoff(func() error {
-			return n.Delete(n.ctx, pool)
-		})
-		return fmt.Errorf("pool resource existed")
-
-	case util.UpdateE:
-		if err != nil && apierrors.IsNotFound(err) {
-			pool.ObjectMeta = metav1.ObjectMeta{
-				Name: pl.MainIp,
-				Annotations: map[string]string{
-					ippool.SubnatAnnotationsKey: subnat,
-				},
-			}
-			pool.Spec = spiderpoolv2beta1.IPPoolSpec{
-				IPVersion:     util.Ipv4Family(), //TODO support ipv6
-				IPs:           ips,
-				Subnet:        "", // Required
-				NodeName:      []string{pl.NodeName},
-				NamespaceName: ns,
-			}
-			// create ippool resource
-			return util.Backoff(func() error {
-				return n.Client.Create(n.ctx, pool)
-			})
-		}
-		if err != nil {
-			return err
-		}
-		return util.Backoff(func() error {
-			return n.Client.Patch(n.ctx, poolCopy, client.MergeFrom(pool))
-		})
-	default:
-		return fmt.Errorf("ippool not support event: %v", ev)
-	}
+	return util.Backoff(func() error {
+		return n.Client.Patch(n.ctx, poolCopy, client.MergeFrom(pool))
+	})
 }
 
-func (n *controller) RegistCallback(fn ippool.CallbackFn) {
-	n.callfns = append(n.callfns, fn)
+func (n *controller) UpdatePool(pl *ippool.Pool, ev util.Event) error {
+	// valid check
+	if pl == nil || pl.MainId == "" {
+		err := fmt.Errorf("could not update pool, id is null")
+		return err
+	}
+
+	switch ev {
+	case util.DeleteE:
+		pool := &spiderpoolv2beta1.SpiderIPPool{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: pl.MainId,
+			},
+		}
+		return n.Delete(n.ctx, pool)
+	case util.UpdateE:
+		return n.updatePool(pl)
+	case util.CreateE:
+		pool := &spiderpoolv2beta1.SpiderIPPool{}
+		err := n.Get(n.ctx, types.NamespacedName{Name: pl.MainId}, pool)
+
+		if err != nil {
+			if apierrors.IsNotFound(err) {
+				pool.ObjectMeta = metav1.ObjectMeta{
+					Name: pl.MainId,
+					Annotations: map[string]string{
+						ippool.SubnatAnnotationsKey: pl.Subnat,
+					},
+				}
+				var ips = make([]string, pl.CapIp.Size())
+				for i, ip := range pl.CapIp.Values() {
+					ips[i] = ip.(string)
+				}
+				var nss = make([]string, pl.Namespace.Size())
+				for i, ip := range pl.Namespace.Values() {
+					nss[i] = ip.(string)
+				}
+				pool.Spec = spiderpoolv2beta1.IPPoolSpec{
+					IPVersion:     util.Ipv4Family(), //TODO support ipv6
+					IPs:           ips,
+					Subnet:        "", // Required
+					NodeName:      []string{pl.NodeName},
+					NamespaceName: nss,
+				}
+				// create ippool resource
+				return util.Backoff(func() error {
+					return n.Client.Create(n.ctx, pool)
+				})
+			}
+		}
+		return err
+	}
+	return nil
+}
+
+func (n *controller) RegistCallback(fn util.CallbackFn) {
+	n.postfns = append(n.postfns, fn)
 }

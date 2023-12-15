@@ -78,13 +78,15 @@ spec:
                 description: vpc-id alias is network-id
                 type: string
             required:
+            - project-id
             - subnet-id
-            - vpc-id
             type: object
           status:
             description: SubnetStatus defines the observed state of Subnet.
             properties:
               cidr:
+                type: string
+              gateway:
                 type: string
               namespaceName:
                 items:

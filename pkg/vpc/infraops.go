@@ -2,11 +2,13 @@ package vpc
 
 import (
 	"context"
-	"fmt"
+	"strings"
+	"sync"
 
 	"github.com/panjf2000/ants/v2"
 	"github.com/yylt/enipam/pkg/infra"
 	"github.com/yylt/enipam/pkg/node"
+	"github.com/yylt/enipam/pkg/util"
 	"k8s.io/klog/v2"
 )
 
@@ -17,26 +19,22 @@ type infraops struct {
 
 	nodes node.Manager
 
-	evch chan *Event
+	snevch chan *subnatEvent
 
 	api infra.Client
 }
 
-func NewInfra(ctx context.Context, number int, nodes node.Manager, api infra.Client) (*infraops, error) {
-	p, err := ants.NewPool(number, ants.WithDisablePurge(true), ants.WithNonblocking(true))
-	if err != nil {
-		return nil, err
-	}
+func NewInfra(ctx context.Context, number int, nodes node.Manager, api infra.Client) *infraops {
 	ops := &infraops{
-		worker: p,
-		evch:   make(chan *Event, 128),
+		snevch: make(chan *subnatEvent, 128),
 		nodes:  nodes,
 		api:    api,
 		ctx:    ctx,
 	}
-
-	go ops.run()
-	return ops, nil
+	for i := 0; i < number; i++ {
+		go ops.run()
+	}
+	return ops
 }
 
 func (i *infraops) run() {
@@ -45,194 +43,168 @@ func (i *infraops) run() {
 		case <-i.ctx.Done():
 			klog.Warningf("receive context exit")
 			return
-		case v, ok := <-i.evch:
+		case v, ok := <-i.snevch:
 			if ok {
-				i.processWork(v)
+				i.processSubnatWork(v)
 			} else {
 				klog.Warningf("infra event channel closed")
 				return
 			}
 		}
 	}
-
 }
 
-func (i *infraops) TriggerEvent(ev *Event) {
+func (i *infraops) HandleSubnatEvent(ev *subnatEvent) {
 	select {
-	case i.evch <- ev:
+	case i.snevch <- ev:
 	default:
 		klog.Warningf("infra event channel is full")
 	}
 }
 
-// hanlder create and attach/assign handler, can not concurrent execute.
-// 1 check avaliable port for nodeid and nodeifid
-// 2 create interface
-// 3 attach/assign
-func (i *infraops) processWork(ev *Event) {
+func (i *infraops) processSubnatWork(ev *subnatEvent) {
 	if ev == nil {
 		return
 	}
 	var (
-		count int32
+		// key: nodename
+		nodes = map[string]*infra.Instance{}
+		// key: id
+		ifs = map[string]*infra.Interface{}
 
-		err error
+		pairs = map[string][]infra.AddressPair{}
 
-		nodeevent = map[*node.NodeInfo]int{}
-
-		tmp = &node.NodeInfo{}
+		wg sync.WaitGroup
 	)
-	// create logic, which is used in node and pod
-	for nodeid, num := range ev.nodeAdd {
-		if num <= 0 {
-			continue
+	for _, node := range ev.nodes {
+		nodes[node.nodeName] = &infra.Instance{
+			Id:        node.nodeId,
+			NodeName:  node.nodeName,
+			DefaultIp: node.defaultIp,
+			Interface: map[string]*infra.Interface{},
 		}
-		tmp.NodeId = nodeid
-		tmp.Name = ""
-		i.nodes.GetNode(tmp)
-		if tmp.Name == "" {
-			continue
-		}
-		nodeevent[tmp.DeepCopy()] = num
-	}
-	// 1 instance add
-	for info, num := range nodeevent {
-		if !i.api.HadPortOnInstance(info.NodeId, num) {
-			ninfo := info.DeepCopy()
-			err = i.worker.Submit(func() {
-				err := i.api.CreateInstancePort(ninfo.NodeId, num)
-				if err != nil {
-					klog.Errorf("create port for node %s failed: %v", ninfo.NodeId, err)
-				}
-			})
-			if err != nil {
-				klog.Errorf("submit work on CreateNodePort failed: %v, had count %d", err, count)
-				return
+		if node.add != 0 {
+			instopt := infra.Opt{
+				Instance:     node.nodeId,
+				InstanceName: node.nodeName,
+				Subnet:       ev.subnatId,
+				Project:      ev.projectId,
+				Vpc:          ev.vpcId,
 			}
-			count++
+			wg.Add(1)
+			i.api.UpdatePort(instopt, node.add, util.CreateE, false, func(ifinfo *infra.Interface) {
+				defer wg.Done()
+			})
 		}
-		klog.Infof("submit workCount %d on create node port", count)
+		for _, po := range node.pools {
+			ifs[po.mainId] = &infra.Interface{
+				Id:       po.mainId,
+				Ip:       node.defaultIp,
+				SubnatId: ev.subnatId,
+				Second:   map[string]*infra.Interface{},
+			}
+			if po.add != 0 {
+				intopt := infra.Opt{
+					Port:    po.mainId,
+					Subnet:  ev.subnatId,
+					Project: ev.projectId,
+					Vpc:     ev.vpcId,
+				}
+				wg.Add(1)
+				i.api.UpdatePort(intopt, po.add, util.CreateE, false, func(ifinfo *infra.Interface) {
+					defer wg.Done()
+				})
+			}
+		}
 	}
+	// wait create done.
+	wg.Wait()
+	opt := infra.Opt{Project: ev.projectId, Vpc: ev.vpcId, Subnet: ev.subnatId}
 
-	// 2 instance attach/detach
-	count, err = i.handlerNodeEvent(ev, nodeevent)
-	klog.Infof("submit workCount %d on attach/detach node port, msg: %v", count, err)
+	err := i.api.EachInterface(opt, func(ifinfo *infra.Interface) (bool, error) {
+		if ifinfo == nil || ifinfo.Ip == "" {
+			return true, nil
+		}
+		// TODO filter by device-id, make sure it is created by our.
+		if strings.HasPrefix(ifinfo.Name, infra.VMInterfaceName) {
+			name := strings.TrimPrefix(ifinfo.Name, infra.VMInterfaceName)
+			no, ok := nodes[name]
+			if !ok {
+				return true, nil
+			}
+			old, ok := no.Interface[ifinfo.Id]
+			if ok {
+				klog.Warningf("subnat %v, found 2 interface (%s, %s) on node %v", ifinfo.SubnatId, old.Name, ifinfo.Name, name)
+				return true, nil
+			}
+			wg.Add(1)
+			i.api.UpdateInstancePort(infra.Opt{
+				Instance: no.Id,
+				Port:     ifinfo.Id,
+			}, util.CreateE, false, func(i *infra.Interface) {
+				wg.Done()
+			})
+		}
+		if strings.HasPrefix(ifinfo.Name, infra.PodInterfaceName) {
+			mainid := strings.TrimPrefix(ifinfo.Name, infra.PodInterfaceName)
+			_, ok := ifs[mainid]
+			if !ok {
+				return true, nil
+			}
+			pairs[mainid] = append(pairs[mainid], infra.AddressPair{
+				Ip:  ifinfo.Ip,
+				Mac: ifinfo.Mac,
+			})
+		}
+		return true, nil
+	})
 	if err != nil {
+		klog.Errorf("iter interface failed: %v", err)
 		return
 	}
 
-	// 3 interface add
-	count = 0
-	for info, num := range ev.podAdd {
-		if !i.api.HadPortOnInterface(info, num) {
-			newinfo := info
-			newnum := num
-			err = i.worker.Submit(func() {
-				err := i.api.CreateInterfacePort(newinfo, newnum)
-				if err != nil {
-					klog.Errorf("create port for interface %s failed: %v", newinfo, err)
-				}
-			})
-			if err != nil {
-				klog.Errorf("submit work on CreatePodPort failed: %v, had count %d", err, count)
-				return
-			}
-			count++
-		}
-		klog.Infof("after create pod port, submit work number  %d", count)
+	for id, ps := range pairs {
+		wg.Add(1)
+		i.api.UpdateInterfacePort(id, ps, util.CreateE, false, func(i *infra.Interface) {
+			clear(ps)
+			wg.Done()
+		})
 	}
+	clear(pairs)
 
-	// 4 port assign/unssign
-	count, err = i.handlerPodEvent(ev)
-	klog.Infof("submit workCount %d on port assign/unssign, msg: %v", count, err)
+	// remove
+	for _, no := range ev.nodes {
+		for _, mid := range no.remove.Values() {
+			id := mid.(string)
+			wg.Add(1)
+			i.api.UpdateInstancePort(infra.Opt{
+				Instance: no.nodeId,
+				Port:     id,
+			}, util.DeleteE, false, func(i *infra.Interface) {
+				wg.Done()
+			})
+		}
+		for _, po := range no.pools {
+			for _, im := range po.remove.Values() {
+				pa := im.(infra.AddressPair)
+				wg.Add(1)
+				pairs[no.nodeId] = append(pairs[no.nodeId], pa)
+			}
+		}
+	}
+	for id, ps := range pairs {
+		wg.Add(1)
+		i.api.UpdateInterfacePort(id, ps, util.DeleteE, false, func(i *infra.Interface) {
+			wg.Done()
+		})
+	}
+	wg.Wait()
+	return
 }
 
-// attach event handler
-func (i *infraops) handlerNodeEvent(ev *Event, noev map[*node.NodeInfo]int) (int32, error) {
-	var (
-		count int32
-		err   error
-	)
-	//  detach node
-	for noid, ifidlist := range ev.nodeRemove {
-		if !i.api.HadDetach(noid, ifidlist) {
-			var newifidlist = make([]string, len(ifidlist))
-			copy(newifidlist, ifidlist)
-			err = i.worker.Submit(func() {
-				err := i.api.DetachPort(noid, newifidlist)
-				if err != nil {
-					klog.Errorf("detach port for node id %s failed: %v", noid, err)
-				}
-			})
-			if err != nil {
-				klog.Errorf("submit detach worker failed %v", err)
-				return count, fmt.Errorf("submit detach worker failed %v", err)
-			}
-			count++
-		}
-	}
-	//  attach node
-	for info, num := range noev {
-		if !i.api.HadAttached(info.NodeId, num) {
-			did := info.NodeId
-			err = i.worker.Submit(func() {
-				err := i.api.AttachPort(did, num)
-				if err != nil {
-					klog.Errorf("attach port for node %s failed: %v", did, err)
-				}
-			})
-			if err != nil {
-				klog.Errorf("submit attach worker failed %v", err)
-				return count, fmt.Errorf("submit attach worker failed %v", err)
-			}
-			count++
-		}
-	}
-	return count, nil
-}
-
-// othen event handler
-func (i *infraops) handlerPodEvent(ev *Event) (int32, error) {
-	var (
-		count int32
-		err   error
-	)
-	// 2. assign pod
-	for ifid, num := range ev.podAdd {
-		if !i.api.HadAssign(ifid, num) {
-			err = i.worker.Submit(func() {
-				err := i.api.AssignPort(ifid, num)
-				if err != nil {
-					klog.Errorf("assign port for ifid %s failed: %v", ifid, err)
-				}
-			})
-			if err != nil {
-				klog.Errorf("submit assign port failed %v", err)
-				return count, fmt.Errorf("submit assign port failed %v", err)
-			}
-			count++
-		}
+func (i *infraops) processPodWork(ev *subnatEvent) {
+	if ev == nil {
+		return
 	}
 
-	// 3. unassign pod
-	for ifid, iplist := range ev.podRemove {
-		if !i.api.HadUnssign(ifid, iplist) {
-			var newiplist = make([]string, len(iplist))
-			copy(newiplist, iplist)
-
-			err = i.worker.Submit(func() {
-				err := i.api.UnssignPort(ifid, newiplist)
-				if err != nil {
-					klog.Errorf("unassign port for ifid %s failed: %v", ifid, err)
-				}
-			})
-			if err != nil {
-				klog.Errorf("submit unassign port failed %v", err)
-				return count, fmt.Errorf("submit unassign port failed %v", err)
-			}
-			count++
-		}
-	}
-
-	return count, nil
 }

@@ -121,6 +121,11 @@ func (in *SubnetStatus) DeepCopyInto(out *SubnetStatus) {
 		*out = new(string)
 		**out = **in
 	}
+	if in.Gateway != nil {
+		in, out := &in.Gateway, &out.Gateway
+		*out = new(string)
+		**out = **in
+	}
 	if in.Cidr != nil {
 		in, out := &in.Cidr, &out.Cidr
 		*out = new(string)

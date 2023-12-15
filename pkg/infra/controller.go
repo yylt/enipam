@@ -1,6 +1,8 @@
 package infra
 
-import "fmt"
+import (
+	"fmt"
+)
 
 type infra struct {
 	Client
@@ -26,4 +28,18 @@ func NewInfra(cfg *InfraCfg) (Client, error) {
 	return &infra{
 		Client: cli,
 	}, nil
+}
+
+func GetInstancePortName(o Opt) string {
+	if o.InstanceName != "" {
+		return fmt.Sprintf("%s%s", VMInterfaceName, o.InstanceName)
+	}
+	return fmt.Sprintf("%s%s", VMInterfaceName, o.Instance)
+}
+
+func GetInterfacePortName(o Opt) string {
+	if o.PortName != "" {
+		return fmt.Sprintf("%s%s", PodInterfaceName, o.PortName)
+	}
+	return fmt.Sprintf("%s%s", PodInterfaceName, o.Port)
 }

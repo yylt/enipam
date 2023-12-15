@@ -9,12 +9,11 @@ require (
 	github.com/emirpasic/gods v1.18.1
 	github.com/gogo/protobuf v1.3.2
 	github.com/google/gops v0.3.28
-	github.com/gophercloud/gophercloud v1.7.0
+	github.com/gophercloud/gophercloud v1.8.0
 	github.com/grafana/pyroscope-go v1.0.4
 	github.com/panjf2000/ants/v2 v2.8.2
 	github.com/sasha-s/go-deadlock v0.3.1
 	github.com/sirupsen/logrus v1.9.3
-	github.com/spaolacci/murmur3 v1.1.0
 	github.com/spf13/cobra v1.7.0
 	github.com/spf13/pflag v1.0.5
 	github.com/spidernet-io/spiderpool v0.7.0

@@ -1,69 +1,34 @@
 package node
 
 import (
-	sync "github.com/yylt/enipam/pkg/lock"
-
 	"github.com/emirpasic/gods/sets/hashset"
-	"github.com/yylt/enipam/pkg/ippool"
+	"github.com/yylt/enipam/pkg/util"
 )
 
-const (
-	// value is string type
-	InstanceAnnotationKey = "node.eni.io/instance"
+type Manager interface {
+	// iter by name, if name is "", will iter all
+	EachNode(fn func(*NodeInfo) error)
+	CouldRemove(no string) bool
 
-	FinializerController = "controller.eni.io"
-)
-
-type Sninfo struct {
-	// infra subnat id
-	Id string
-
-	// vpc subnat CRD
-	Name string
-
-	// namespace in subnat CRD
-	Nemaspace *hashset.Set
-
-	// node in subnat CRD
-	Node *hashset.Set
-
-	// Deleted or not
-	Deleted bool
-
-	PreAllocated int
-
-	MinAvaliab int
-}
-
-func (in *Sninfo) DeepCopy() *Sninfo {
-	return &Sninfo{
-		Name:      in.Name,
-		Nemaspace: hashset.New(in.Nemaspace.Values()...),
-		Node:      hashset.New(in.Node.Values()...),
-		Id:        in.Id,
-		Deleted:   in.Deleted,
-	}
+	// callback on pool event
+	RegistCallback(util.CallbackFn)
 }
 
 type NodeInfo struct {
 	// nodename
 	Name string
 
-	// instance id, add by daemon in every node.
+	// instance id
 	NodeId string
 
 	// default ip, usually is kubernetes.node.InternelIP
 	NodeIp string
 
-	// node had been delete
+	// deleted
 	deleted bool
-
-	sync.RWMutex
-
-	// subnatname
-	subnat *hashset.Set
 }
 
+// only id / ip / name copy
 func (ni *NodeInfo) DeepCopy() *NodeInfo {
 	return &NodeInfo{
 		NodeId: ni.NodeId,
@@ -72,16 +37,8 @@ func (ni *NodeInfo) DeepCopy() *NodeInfo {
 	}
 }
 
-type AllocatedInfo struct {
-	// mainip(ip in node) - cap/used iplist
-	PodAllocated map[string]*ippool.Pool
-
-	// nodedefaultip - subnat
-	// subnat will work on the node
-	NodeAllocated map[string]*hashset.Set
-
-	// nodedefaultip
-	NodeRemove map[string]struct{}
+func (ni *NodeInfo) IsDeleted() bool {
+	return ni.deleted
 }
 
 func MapDeepCopy(src map[string]*hashset.Set, dest map[string]*hashset.Set) {

@@ -19,8 +19,6 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 
 	"github.com/yylt/enipam/pkg/infra"
-	"github.com/yylt/enipam/pkg/ippool"
-	"github.com/yylt/enipam/pkg/node"
 	"github.com/yylt/enipam/pkg/vpc"
 )
 
@@ -60,11 +58,10 @@ var envInfo = []envConf{
 	{"ENI_INFRAMUTEX", "true", false, nil, &controllerContext.Cfg.InfraMutexOnCreate, nil},
 
 	{"ENI_OPENSTACK_AUTH_URL", "", false, &controllerContext.Cfg.Openstack.AuthUrl, nil, nil},
-	{"ENI_OPENSTACK_APPLICATION_CREDENTIAL_ID", "", false, &controllerContext.Cfg.Openstack.AuthUrl, nil, nil},
-	{"ENI_OPENSTACK_APPLICATION_CREDENTIAL_SECRET", "", false, &controllerContext.Cfg.Openstack.AuthUrl, nil, nil},
-	{"ENI_OPENSTACK_DEFAULT_SUBNAT_ID", "", false, &controllerContext.Cfg.Openstack.AuthUrl, nil, nil},
-	{"ENI_OPENSTACK_DEFAULT_PROJECT_ID", "", false, &controllerContext.Cfg.Openstack.AuthUrl, nil, nil},
-	{"ENI_OPENSTACK_DEFAULT_REGION", "", false, &controllerContext.Cfg.Openstack.AuthUrl, nil, nil},
+	{"ENI_OPENSTACK_APPLICATION_CREDENTIAL_ID", "", false, &controllerContext.Cfg.Openstack.CredentialId, nil, nil},
+	{"ENI_OPENSTACK_APPLICATION_CREDENTIAL_SECRET", "", false, &controllerContext.Cfg.Openstack.CredentialSecret, nil, nil},
+	{"ENI_OPENSTACK_DEFAULT_SUBNAT_ID", "", true, &controllerContext.Cfg.VpcCfg.DefaultSubnatId, nil, nil},
+	{"ENI_OPENSTACK_DEFAULT_PROJECT_ID", "", true, &controllerContext.Cfg.VpcCfg.DefaultProjectId, nil, nil},
 }
 
 type Config struct {
@@ -101,10 +98,7 @@ type ControllerContext struct {
 	DynamicClient *dynamic.DynamicClient
 
 	// manager
-	CRDManager    ctrl.Manager
-	IPPoolManager ippool.Manager
-	NodeManager   node.Manager
-	VpcManager    *vpc.Manager
+	CRDManager ctrl.Manager
 
 	// probe
 	IsStartupProbe atomic.Bool

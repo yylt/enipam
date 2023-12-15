@@ -122,7 +122,7 @@ func (t *Trigger) waiter() {
 
 			t.mutex.Lock()
 			t.lastTrigger = time.Now()
-			klog.Infof("trigger %s had trigger number %s before start", t.params.Name, t.numFolds)
+			klog.Infof("trigger %s had trigger number %d before start", t.params.Name, t.numFolds)
 			t.numFolds = 0
 			t.mutex.Unlock()
 

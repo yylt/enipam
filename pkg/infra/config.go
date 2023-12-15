@@ -21,8 +21,6 @@ type InfraCfg struct {
 
 type OpenstackCfg struct {
 	AuthUrl          string `yaml:"authUrl,omitempty"`
-	DefaultSubnatId  string `yaml:"defaultSubneteId,omitempty"`
-	ProjectId        string `yaml:"projectId,omitempty"`
 	CredentialId     string `yaml:"credentialId,omitempty"`
 	CredentialSecret string `yaml:"credentialSecret,omitempty"`
 }

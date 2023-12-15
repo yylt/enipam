@@ -230,7 +230,7 @@ github.com/google/gops/signal
 # github.com/google/uuid v1.3.0
 ## explicit
 github.com/google/uuid
-# github.com/gophercloud/gophercloud v1.7.0 => github.com/easystack/gophercloud v1.5.3
+# github.com/gophercloud/gophercloud v1.8.0 => github.com/easystack/gophercloud v1.5.3
 ## explicit; go 1.20
 github.com/gophercloud/gophercloud
 github.com/gophercloud/gophercloud/openstack
@@ -241,7 +241,6 @@ github.com/gophercloud/gophercloud/openstack/identity/v2/tokens
 github.com/gophercloud/gophercloud/openstack/identity/v3/extensions/ec2tokens
 github.com/gophercloud/gophercloud/openstack/identity/v3/extensions/oauth1
 github.com/gophercloud/gophercloud/openstack/identity/v3/tokens
-github.com/gophercloud/gophercloud/openstack/networking/v2/networks
 github.com/gophercloud/gophercloud/openstack/networking/v2/ports
 github.com/gophercloud/gophercloud/openstack/networking/v2/subnets
 github.com/gophercloud/gophercloud/openstack/utils
@@ -387,9 +386,6 @@ github.com/shirou/gopsutil/v3/mem
 ## explicit; go 1.13
 github.com/sirupsen/logrus
 github.com/sirupsen/logrus/hooks/syslog
-# github.com/spaolacci/murmur3 v1.1.0
-## explicit
-github.com/spaolacci/murmur3
 # github.com/spf13/afero v1.9.5
 ## explicit; go 1.16
 github.com/spf13/afero

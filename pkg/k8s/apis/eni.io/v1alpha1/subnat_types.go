@@ -30,11 +30,11 @@ type SubnetSpec struct {
 	Subnet string `json:"subnet-id"`
 
 	// vpc-id alias is network-id
-	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:Optional
 	Vpc string `json:"vpc-id"`
 
 	// project-id alias is tenant-id
-	// +kubebuilder:validation:Optional
+	// +kubebuilder:validation:Required
 	Project string `json:"project-id"`
 
 	// +kubebuilder:validation:Optional
@@ -57,6 +57,9 @@ type SubnetStatus struct {
 
 	// +kubebuilder:validation:Optional
 	VpcName *string `json:"vpc-name,omitempty"`
+
+	// +kubebuilder:validation:Optional
+	Gateway *string `json:"gateway,omitempty"`
 
 	// +kubebuilder:validation:Optional
 	Cidr *string `json:"cidr,omitempty"`

@@ -19,6 +19,7 @@ import (
 
 	"github.com/yylt/enipam/pkg/infra"
 	"github.com/yylt/enipam/pkg/ippool/spiderpool"
+	"github.com/yylt/enipam/pkg/namespace"
 	"github.com/yylt/enipam/pkg/node"
 	"github.com/yylt/enipam/pkg/vpc"
 	"k8s.io/klog/v2"
@@ -146,15 +147,11 @@ func WatchSignal(sigCh chan os.Signal) {
 }
 
 func initControllerServiceManagers(ctrlctx *ControllerContext) {
-	var (
-		err error
-	)
 
-	controllerContext.IPPoolManager, err = spiderpool.NewControllerManager(
+	poolManager, err := spiderpool.NewControllerManager(
 		ctrlctx.CRDManager,
 		ctrlctx.InnerCtx,
 	)
-
 	if err != nil {
 		klog.Fatal(err.Error())
 	}
@@ -162,29 +159,33 @@ func initControllerServiceManagers(ctrlctx *ControllerContext) {
 	if err != nil {
 		klog.Fatal(err.Error())
 	}
+	nsctrl, err := namespace.NewControllerManager(ctrlctx.CRDManager, ctrlctx.InnerCtx)
+	if err != nil {
+		klog.Fatal(err.Error())
+	}
 	nodeManager, err := node.NewControllerManager(
 		ctrlctx.CRDManager,
 		ctrlctx.InnerCtx,
-		controllerContext.IPPoolManager,
-		api,
+		poolManager,
 	)
 	if err != nil {
 		klog.Fatal(err.Error())
 	}
-	controllerContext.NodeManager = nodeManager
 
 	vpcManager, err := vpc.NewManager(
 		&ctrlctx.Cfg.VpcCfg,
 		ctrlctx.CRDManager,
 		ctrlctx.InnerCtx,
+		poolManager,
 		nodeManager,
 		api,
 	)
 	if err != nil {
 		klog.Fatal(err.Error())
 	}
-	nodeManager.InjectSubnat(vpcManager)
-	controllerContext.VpcManager = vpcManager
+	poolManager.RegistCallback(vpcManager.GetCallback())
+	nodeManager.RegistCallback(vpcManager.GetCallback())
+	nsctrl.RegistCallback(vpcManager.GetCallback())
 }
 
 // initK8sClientSet will new kubernetes Clientset

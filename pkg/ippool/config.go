@@ -12,56 +12,44 @@ const (
 	FinializerController = "controller.eni.io"
 )
 
-type CallbackFn func(util.Event, *Pool)
-
 type Manager interface {
-	// now ippool implement in spiderpool/ciliumippool/calicoippool
-	// update pool and insert/delete ip, call by node/vpc controller.
-	// create pool if not exist.
-	// different pool maybe use different zone.
-	UpdatePool(pl *Pool, e util.Event) error
+	// update
+	UpdatePool(pl *Pool, ev util.Event) error
 
-	// get pool from node mainip
-	GetPoolByIp(mainip string) *Pool
-
-	// get pool by subnat
-	GetPoolBySubnat(name string) []*Pool
+	// for-each pool
+	EachPool(func(*Pool) error)
 
 	// callback on pool event
-	// 1 delete event: true-noderemove done; false noderemove notready
-	// 1 update event: TODO
-	RegistCallback(CallbackFn)
+	RegistCallback(util.CallbackFn)
 }
 
-// node - multi pool
-// NOTICE. pool must support ip or ip/32
-// controller spilit one subnat to multipool
+// NOTICE. pool CRD should support ip or ip/32
 type Pool struct {
 	// node name
 	NodeName string
 
-	// interface ip, it is not nodeip
-	MainIp string
+	// interface id, also name
+	MainId string
 
-	// subnat
+	// subnat cr name
 	Subnat string
 
 	// namespace list
 	Namespace *hashset.Set
 
 	// capacity ip
-	CapIp map[string]struct{}
+	CapIp *hashset.Set
 
 	// used ip
-	UsedIp map[string]struct{}
+	UsedIp *hashset.Set
 }
 
-// only compare mainip,nodename, subnatns
+// compare mainip, nodename, subnat, namespaces
 func (p *Pool) PartEqual(dst *Pool) bool {
 	if dst == nil {
 		return false
 	}
-	if dst.MainIp != p.MainIp {
+	if dst.MainId != p.MainId {
 		return false
 	}
 	if dst.NodeName != p.NodeName {
@@ -78,18 +66,13 @@ func (p *Pool) PartEqual(dst *Pool) bool {
 
 func (p *Pool) DeepCopy() *Pool {
 	newp := &Pool{
-		NodeName:  p.NodeName,
-		MainIp:    p.MainIp,
-		CapIp:     map[string]struct{}{},
-		UsedIp:    map[string]struct{}{},
-		Namespace: hashset.New(p.Namespace.Values()...),
 		Subnat:    p.Subnat,
+		NodeName:  p.NodeName,
+		MainId:    p.MainId,
+		CapIp:     hashset.New(p.CapIp.Values()...),
+		UsedIp:    hashset.New(p.UsedIp.Values()...),
+		Namespace: hashset.New(p.Namespace.Values()...),
 	}
-	for ip := range p.CapIp {
-		newp.CapIp[ip] = struct{}{}
-	}
-	for ip := range p.UsedIp {
-		newp.UsedIp[ip] = struct{}{}
-	}
+
 	return newp
 }

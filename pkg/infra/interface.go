@@ -1,60 +1,44 @@
 package infra
 
 import (
-	sync "github.com/yylt/enipam/pkg/lock"
+	"sync"
+
+	"github.com/yylt/enipam/pkg/util"
 )
 
+//sync "github.com/yylt/enipam/pkg/lock"
+
 type Client interface {
-	// retcode true:
-	// 1 had avaliable num for instance id
-	// 2 number had attached on instance id
-	HadPortOnInstance(id string, num int) bool
+	// detail
+	GetInterface(opt Opt) *Interface
+	GetInstance(opt Opt) *Instance
 
-	// create port by instance id
-	CreateInstancePort(id string, num int) error
+	// subnat
+	GetSubnat(opt Opt) *Subnat
 
-	// retcode true:
-	// 1 had avaliable num for interface id
-	// 2 number had assign on interface id
-	HadPortOnInterface(id string, num int) bool
+	// create/delete.
+	// Opt.Instance is not null mean create for deviceowner is Instance
+	// Opt.Port is not null mean create for deviceowner is Port
+	// it is async when wait is false
+	UpdatePort(o Opt, number int, ev util.Event, wait bool, postfn func(*Interface)) error
 
-	CreateInterfacePort(id string, num int) error
+	// the Interface will not update second param.
+	EachInterface(opt Opt, fn func(*Interface) (bool, error)) error
 
-	// true: had attach num for instance id
-	HadAttached(id string, num int) bool
+	// attach/detach
+	// in Opt, the Instance, Port and xx must not null
+	UpdateInstancePort(o Opt, ev util.Event, wait bool, postfn func(*Interface)) error
 
-	AttachPort(id string, num int) error
-
-	HadDetach(noid string, ifidlist []string) bool
-
-	DetachPort(noid string, newifidlist []string) error
-
-	// true: had assign number on interface
-	HadAssign(id string, num int) bool
-
-	AssignPort(ifid string, num int) error
-
-	// true: had unssign ip list from interface id
-	HadUnssign(ifid string, iplist []string) bool
-
-	UnssignPort(ifid string, newiplist []string) error
-
-	// get
-	GetInterface(opt FilterOpt) *Interface
-	GetInstance(opt FilterOpt) *Instance
-
-	// iter
-	// IterInstance(opt FilterOpt, fn func(*Instance) error)
-	// IterInterface(opt FilterOpt, fn func(*Interface) error)
-
-	// metadata
-	GetMetadata(*Metadata)
-
-	// add instance
-	AddInstance(n *Instance) error
+	// assign/unsign
+	UpdateInterfacePort(id string, p []AddressPair, ev util.Event, wait bool, postfn func(*Interface)) error
 }
 
+type AddressPair struct {
+	Ip, Mac string
+}
 type Interface struct {
+	Name string
+
 	Id string
 
 	Ip string
@@ -62,10 +46,9 @@ type Interface struct {
 	SubnatId string
 
 	Mac string
-	// owner id, instanceid or mainPortId
-	sync.RWMutex
 
-	// interface ip : ip
+	sync.RWMutex
+	// ip : interfaceInfo
 	Second map[string]*Interface
 }
 
@@ -87,10 +70,8 @@ type Instance struct {
 	// owner name, nodename in k8s
 	NodeName string
 
-	// for interface update
-	sync.RWMutex
-
-	// mainIfId
+	// interface which exclude default.
+	// ip - interface
 	Interface map[string]*Interface
 }
 
@@ -117,7 +98,9 @@ type Subnat struct {
 	GwIp string
 	Id   string
 	Name string
-	Vpc  string
+
+	// alias network id
+	VpcId string
 }
 
 type Metadata struct {
@@ -136,7 +119,7 @@ type Metadata struct {
 	DefaultSgId    string
 }
 
-type FilterOpt struct {
+type Opt struct {
 	Subnet string `json:"subnet-id"`
 
 	// vpc-id alias is network-id
@@ -150,6 +133,12 @@ type FilterOpt struct {
 
 	// instance-id alias is computer-id
 	Instance string `json:"instance-id"`
+
+	// port name
+	PortName string `json:"port-name"`
+
+	// instance-name
+	InstanceName string `json:"instance-name"`
 
 	// ip alias is instance Ip or interface IP
 	Ip string `json:"ip"`
