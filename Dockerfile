@@ -3,7 +3,6 @@
 
 ARG BASE_IMAGE=docker.io/library/busybox:1.36.1
 
-
 FROM ${BASE_IMAGE}
 
 # TARGETOS is an automatic platform ARG enabled by Docker BuildKit.

@@ -69,9 +69,6 @@ func NewManager(cfg *VpcCfg, mgr ctrl.Manager, ctx context.Context, pool ippool.
 	}
 	v.ops = NewInfra(ctx, cfg.WorkerNumber, nodemg, v.api)
 
-	pool.RegistCallback(v.callback)
-	nodemg.RegistCallback(v.callback)
-
 	return v, v.probe(mgr)
 }
 
