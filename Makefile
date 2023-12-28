@@ -6,7 +6,7 @@
 
 include Makefile.defs 
 
-all: build-bin install-bin
+all: build-bin install-bin clean-bin
 
 .PHONY: all build install
 
@@ -29,6 +29,8 @@ install-bash-completion:
 	$(QUIET)$(INSTALL) -m 0755 -d $(DESTDIR_BIN)
 	for i in $(SUBDIRS); do $(MAKE) $(SUBMAKEOPTS) -C $$i install-bash-completion; done
 
+clean-bin:
+	for i in $(SUBDIRS); do $(MAKE) $(SUBMAKEOPTS) -C $$i clean; done
 
 # ============ build-load-image ============
 .PHONY: image
